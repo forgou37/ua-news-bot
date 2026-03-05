@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -7,12 +9,18 @@ from telegram.ext import (
     ContextTypes, JobQueue
 )
 from config import BOT_TOKEN, CHANNELS, TOPICS, DIGEST_HOUR, DIGEST_MINUTE, TOP_NEWS_COUNT
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
 from scraper import scrape_channel
 from db import init_db, save_news, get_top_news, get_digest_news, get_news_by_topic, get_stats, upsert_user
 from summarizer import ai_summary
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
+
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────
@@ -200,6 +208,10 @@ async def send_morning_digest(ctx: ContextTypes.DEFAULT_TYPE):
 # ─── main ───────────────────────────────────────────────────────────────────
 
 def main():
+    if not BOT_TOKEN:
+        logger.error("BOT_TOKEN is not set!")
+        sys.exit(1)
+    logger.info(f"Starting bot with token: {BOT_TOKEN[:10]}...")
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
     
