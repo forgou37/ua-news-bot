@@ -1,5 +1,8 @@
+[phases.setup]
+nixPkgs = ["python312"]
+
 [phases.build]
 cmds = ["pip install -r requirements.txt"]
 
 [start]
-cmd = "python3 test_start.py"
+cmd = "python3 bot.py"
