@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from datetime import timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,8 +14,10 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout,
 logger = logging.getLogger(__name__)
 
 CHANNEL_MAP = {ch["username"]: ch["name"] for ch in CHANNELS}
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")  # https://your-app.railway.app
+PORT = int(os.environ.get("PORT", 8443))
 
-def classify_topics(text: str) -> list:
+def classify_topics(text):
     t = text.lower()
     return [topic for topic, kws in TOPICS.items() if any(k in t for k in kws)]
 
@@ -111,8 +114,19 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("sources", cmd_sources))
     app.add_handler(CallbackQueryHandler(cb_topic, pattern="^topic:"))
-    logger.info("Bot started!")
-    app.run_polling(drop_pending_updates=True)
+
+    if WEBHOOK_URL:
+        logger.info(f"Starting webhook on port {PORT}, url={WEBHOOK_URL}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=f"{WEBHOOK_URL}/webhook",
+            url_path="/webhook",
+            drop_pending_updates=True,
+        )
+    else:
+        logger.info("Starting polling...")
+        app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
