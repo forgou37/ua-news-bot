@@ -225,10 +225,10 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_topic, pattern="^topic:"))
     
     # morning digest job
+    from datetime import time as dt_time
     app.job_queue.run_daily(
         send_morning_digest,
-        time=datetime.now().replace(hour=DIGEST_HOUR, minute=DIGEST_MINUTE,
-                                    second=0, microsecond=0).timetz()
+        time=dt_time(hour=DIGEST_HOUR, minute=DIGEST_MINUTE, second=0, tzinfo=timezone.utc)
     )
     
     logger.info("Bot started!")
