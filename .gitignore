@@ -4,3 +4,4 @@ __pycache__/
 news.db
 bot.log
 config.py
+.env.local
