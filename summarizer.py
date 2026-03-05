@@ -1,7 +1,8 @@
-import anthropic
-from config import ANTHROPIC_API_KEY
+import google.generativeai as genai
+from config import GEMINI_API_KEY
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 def ai_summary(news_items: list[dict]) -> str:
     if not news_items:
@@ -13,17 +14,12 @@ def ai_summary(news_items: list[dict]) -> str:
     ])
     
     try:
-        msg = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=600,
-            messages=[{
-                "role": "user",
-                "content": f"""Ти — редактор новин. На основі цих постів з українських ТГ-каналів напиши короткий дайджест дня (3-5 речень). 
+        response = model.generate_content(
+            f"""Ти — редактор новин. На основі цих постів з українських ТГ-каналів напиши короткий дайджест дня (3-5 речень). 
 Тільки найважливіше, без води. Мова: українська.
 
 {texts}"""
-            }]
         )
-        return msg.content[0].text
+        return response.text
     except Exception as e:
         return f"AI-резюме недоступне: {e}"
