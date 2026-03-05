@@ -1,8 +1,11 @@
 import logging
 import os
 import sys
-from datetime import timezone
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+import asyncio
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from config import BOT_TOKEN, CHANNELS, TOPICS, TOP_NEWS_COUNT
 from db import init_db, save_news, get_top_news, get_digest_news, get_news_by_topic, get_stats, upsert_user
@@ -14,8 +17,11 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout,
 logger = logging.getLogger(__name__)
 
 CHANNEL_MAP = {ch["username"]: ch["name"] for ch in CHANNELS}
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")  # https://your-app.railway.app
-PORT = int(os.environ.get("PORT", 8443))
+PORT = int(os.environ.get("PORT", 8080))
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+
+# Global app reference
+APP = None
 
 def classify_topics(text):
     t = text.lower()
@@ -41,12 +47,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     upsert_user(update.effective_user.id)
     await update.message.reply_text(
         "🇺🇦 <b>UA News Digest</b>\n\n"
-        "🔥 /top — топ новин\n"
-        "📰 /digest — дайджест 12 год\n"
-        "🤖 /summary — AI-резюме\n"
-        "📡 /topics — по темах\n"
-        "📊 /stats — статистика\n"
-        "📋 /sources — канали",
+        "🔥 /top — топ новин\n📰 /digest — дайджест 12 год\n"
+        "🤖 /summary — AI-резюме\n📡 /topics — по темах\n"
+        "📊 /stats — статистика\n📋 /sources — канали",
         parse_mode="HTML"
     )
 
@@ -100,33 +103,72 @@ async def cmd_sources(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = ["📋 <b>Канали:</b>\n"] + [f"• <a href='https://t.me/{c[\"username\"]}'>{c[\"name\"]}</a>" for c in CHANNELS]
     await update.message.reply_text("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
 
+
+class WebhookHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass  # quiet
+
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def do_POST(self):
+        if self.path != "/webhook":
+            self.send_response(404)
+            self.end_headers()
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        data = json.loads(self.rfile.read(length))
+        self.send_response(200)
+        self.end_headers()
+        # Process update in background
+        asyncio.run_coroutine_threadsafe(
+            APP.process_update(Update.de_json(data, APP.bot)),
+            APP.loop
+        )
+
+
 def main():
+    global APP
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN not set!")
         sys.exit(1)
-    init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("top", cmd_top))
-    app.add_handler(CommandHandler("digest", cmd_digest))
-    app.add_handler(CommandHandler("summary", cmd_summary))
-    app.add_handler(CommandHandler("topics", cmd_topics))
-    app.add_handler(CommandHandler("stats", cmd_stats))
-    app.add_handler(CommandHandler("sources", cmd_sources))
-    app.add_handler(CallbackQueryHandler(cb_topic, pattern="^topic:"))
 
-    if WEBHOOK_URL:
-        logger.info(f"Starting webhook on port {PORT}, url={WEBHOOK_URL}")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            webhook_url=f"{WEBHOOK_URL}/webhook",
-            url_path="/webhook",
-            drop_pending_updates=True,
-        )
-    else:
-        logger.info("Starting polling...")
-        app.run_polling(drop_pending_updates=True)
+    init_db()
+    APP = Application.builder().token(BOT_TOKEN).updater(None).build()
+    APP.add_handler(CommandHandler("start", cmd_start))
+    APP.add_handler(CommandHandler("top", cmd_top))
+    APP.add_handler(CommandHandler("digest", cmd_digest))
+    APP.add_handler(CommandHandler("summary", cmd_summary))
+    APP.add_handler(CommandHandler("topics", cmd_topics))
+    APP.add_handler(CommandHandler("stats", cmd_stats))
+    APP.add_handler(CommandHandler("sources", cmd_sources))
+    APP.add_handler(CallbackQueryHandler(cb_topic, pattern="^topic:"))
+
+    async def run():
+        await APP.initialize()
+        await APP.start()
+        # Register webhook with Telegram
+        if WEBHOOK_URL:
+            await APP.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook", drop_pending_updates=True)
+            logger.info(f"Webhook set: {WEBHOOK_URL}/webhook")
+        # Start HTTP server in thread
+        server = HTTPServer(("0.0.0.0", PORT), WebhookHandler)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        logger.info(f"Listening on port {PORT}")
+        # Keep alive
+        import signal
+        stop = asyncio.Event()
+        loop = asyncio.get_event_loop()
+        loop.add_signal_handler(signal.SIGTERM, stop.set)
+        await stop.wait()
+        await APP.stop()
+        await APP.shutdown()
+
+    asyncio.run(run())
+
 
 if __name__ == "__main__":
     main()
